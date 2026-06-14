@@ -1,31 +1,53 @@
 import User from '../models/User.js';
 import jwt from 'jsonwebtoken';
 import { Resend } from 'resend';
+import nodemailer from 'nodemailer';
 
 const sendEmail = async ({ to, subject, text, html }) => {
   try {
-    if (!process.env.RESEND_API_KEY) {
-      console.error('[RESEND ERROR] RESEND_API_KEY is not defined in backend env file');
-      return false;
+    // 1. Check if Gmail SMTP credentials are provided in env
+    if (process.env.EMAIL_USER && process.env.EMAIL_PASS) {
+      const transporter = nodemailer.createTransport({
+        service: 'gmail',
+        auth: {
+          user: process.env.EMAIL_USER,
+          pass: process.env.EMAIL_PASS
+        }
+      });
+
+      const mailOptions = {
+        from: `"WedCoholic Couture" <${process.env.EMAIL_USER}>`,
+        to,
+        subject,
+        text,
+        html
+      };
+
+      await transporter.sendMail(mailOptions);
+      return true;
     }
 
-    const resend = new Resend(process.env.RESEND_API_KEY);
-    // Use the custom configured sender email or Resend's default sandbox domain
-    const sender = process.env.EMAIL_USER || 'onboarding@resend.dev';
+    // 2. Fall back to Resend API
+    if (process.env.RESEND_API_KEY) {
+      const resend = new Resend(process.env.RESEND_API_KEY);
+      // If EMAIL_USER is configured but EMAIL_PASS is not, use it as sender for Resend custom domain
+      const sender = process.env.EMAIL_USER || 'onboarding@resend.dev';
 
-    const response = await resend.emails.send({
-      from: `WedCoholic Couture <${sender}>`,
-      to,
-      subject,
-      text,
-      html,
-    });
+      const response = await resend.emails.send({
+        from: `WedCoholic Couture <${sender}>`,
+        to,
+        subject,
+        text,
+        html,
+      });
 
-    if (response.error) {
-      return false;
+      if (response.error) {
+        return false;
+      }
+      return true;
     }
 
-    return true;
+    return false;
   } catch (error) {
     return false;
   }
