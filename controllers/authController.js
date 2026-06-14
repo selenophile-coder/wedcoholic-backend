@@ -148,18 +148,16 @@ export const signup = async (req, res) => {
     `;
 
     let emailSent = false;
-    if (process.env.RESEND_API_KEY) {
+    if (process.env.RESEND_API_KEY || (process.env.EMAIL_USER && process.env.EMAIL_PASS)) {
       emailSent = await sendEmail({ to: email, subject, text: `Your OTP code is ${otp}`, html });
     }
-
-
 
     res.status(201).json({
       message: emailSent
         ? 'Account initiated. Please enter the OTP code sent to your email.'
         : 'Account initiated. Please enter the OTP code logged to the server terminal.',
       email: user.email,
-      otpFallback: (process.env.NODE_ENV !== 'production' && !process.env.RESEND_API_KEY) ? otp : undefined
+      otpFallback: (process.env.NODE_ENV !== 'production' && !emailSent) ? otp : undefined
     });
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -387,18 +385,16 @@ export const forgotPassword = async (req, res) => {
     `;
 
     let emailSent = false;
-    if (process.env.RESEND_API_KEY) {
+    if (process.env.RESEND_API_KEY || (process.env.EMAIL_USER && process.env.EMAIL_PASS)) {
       emailSent = await sendEmail({ to: email, subject, text: `Your password reset OTP code is ${otp}`, html });
     }
-
-
 
     res.status(200).json({
       message: emailSent
         ? 'OTP sent to your email. Please verify to reset your password.'
         : 'OTP sent to server log. Please verify to reset your password.',
       email,
-      otpFallback: (process.env.NODE_ENV !== 'production' && !process.env.RESEND_API_KEY) ? otp : undefined
+      otpFallback: (process.env.NODE_ENV !== 'production' && !emailSent) ? otp : undefined
     });
   } catch (error) {
     res.status(500).json({ message: error.message });
