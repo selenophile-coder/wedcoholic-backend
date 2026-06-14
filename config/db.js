@@ -1,4 +1,12 @@
 import mongoose from 'mongoose';
+import dns from 'dns';
+
+// Force DNS lookup to use public DNS servers to bypass local router DNS resolution limits
+try {
+  dns.setServers(['8.8.8.8', '1.1.1.1']);
+} catch (e) {
+  // Ignore if not supported in the node runtime env
+}
 
 const connectDB = async () => {
   const primaryUri = process.env.MONGO_URI || 'mongodb://127.0.0.1:27017/wedcoholic';
