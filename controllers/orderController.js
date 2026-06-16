@@ -1,5 +1,6 @@
 import Order from '../models/Order.js';
 import Product from '../models/Product.js';
+import User from '../models/User.js';
 
 // Seed mock orders for analytics when empty
 export const seedInitialOrders = async () => {
@@ -104,9 +105,52 @@ export const createOrder = async (req, res) => {
       status: 'Pending',
     });
 
+    let updatedUser = undefined;
+    if (req.user) {
+      const user = await User.findById(req.user._id);
+      if (user) {
+        let isUpdated = false;
+        if (guestDetails.phone && user.phone !== guestDetails.phone) {
+          user.phone = guestDetails.phone;
+          isUpdated = true;
+        }
+        if (guestDetails.address && user.address !== guestDetails.address) {
+          user.address = guestDetails.address;
+          isUpdated = true;
+        }
+        if (guestDetails.city && user.city !== guestDetails.city) {
+          user.city = guestDetails.city;
+          isUpdated = true;
+        }
+        if (guestDetails.state && user.state !== guestDetails.state) {
+          user.state = guestDetails.state;
+          isUpdated = true;
+        }
+        if (guestDetails.zip && user.zip !== guestDetails.zip) {
+          user.zip = guestDetails.zip;
+          isUpdated = true;
+        }
+        if (isUpdated) {
+          await user.save();
+        }
+        updatedUser = {
+          _id: user._id,
+          name: user.name,
+          email: user.email,
+          role: user.role,
+          phone: user.phone,
+          address: user.address,
+          city: user.city,
+          state: user.state,
+          zip: user.zip,
+        };
+      }
+    }
+
     res.status(201).json({
       message: 'Order placed successfully!',
       order,
+      user: updatedUser,
     });
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -254,6 +298,24 @@ export const trackOrder = async (req, res) => {
     if (!order) {
       return res.status(404).json({ message: 'Order not found' });
     }
+
+    // Access Control: Allow Admins/SuperAdmins to track any order
+    const isAdminUser = req.user && (req.user.role === 'admin' || req.user.role === 'superadmin');
+
+    if (!isAdminUser) {
+      // If the order has an associated registered user, only that user can track it
+      if (order.user) {
+        if (!req.user || req.user._id.toString() !== order.user.toString()) {
+          return res.status(403).json({ message: 'Access denied. This order belongs to another registered client.' });
+        }
+      } else {
+        // If it is a guest checkout, and a user is logged in, their email must match
+        if (req.user && order.guestDetails?.email !== req.user.email) {
+          return res.status(403).json({ message: 'Access denied. This guest order belongs to another client.' });
+        }
+      }
+    }
+
     res.json({
       _id: order._id,
       createdAt: order.createdAt,
@@ -277,12 +339,7 @@ export const trackOrder = async (req, res) => {
 // @access  Private
 export const getMyOrders = async (req, res) => {
   try {
-    const orders = await Order.find({
-      $or: [
-        { user: req.user._id },
-        { 'guestDetails.email': req.user.email }
-      ]
-    }).sort({ createdAt: -1 });
+    const orders = await Order.find({ user: req.user._id }).sort({ createdAt: -1 });
     res.json(orders);
   } catch (error) {
     res.status(500).json({ message: error.message });

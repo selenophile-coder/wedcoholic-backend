@@ -14,14 +14,14 @@ const connectDB = async () => {
     const conn = await mongoose.connect(primaryUri, {
       serverSelectionTimeoutMS: 5000 // Timeout after 5 seconds to try fallback quickly
     });
-    console.log(`MongoDB Connected: ${conn.connection.host}`);
+    console.log('MongoDB Connected');
   } catch (error) {
     if (primaryUri.startsWith('mongodb+srv')) {
       try {
         const localConn = await mongoose.connect('mongodb://127.0.0.1:27017/wedcoholic', {
           serverSelectionTimeoutMS: 3000
         });
-        console.log(`Fallback local MongoDB Connected successfully: ${localConn.connection.host}`);
+        console.log('Fallback local MongoDB Connected successfully');
       } catch (localErr) {
         console.error(`Fallback local MongoDB failed: ${localErr.message}`);
         console.warn('========================================================================');

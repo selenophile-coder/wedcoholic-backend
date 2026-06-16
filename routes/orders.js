@@ -9,15 +9,15 @@ import {
   trackOrder,
   getMyOrders
 } from '../controllers/orderController.js';
-import { protect, adminOnly } from '../middleware/authMiddleware.js';
+import { protect, adminOnly, optionalProtect } from '../middleware/authMiddleware.js';
 
 const router = express.Router();
 
 router.get('/myorders', protect, getMyOrders);
-router.get('/track/:id', trackOrder);
+router.get('/track/:id', optionalProtect, trackOrder);
 
 router.route('/')
-  .post(createOrder)
+  .post(optionalProtect, createOrder)
   .get(protect, adminOnly, getOrders)
   .delete(protect, adminOnly, clearAllOrders);
 

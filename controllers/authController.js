@@ -156,8 +156,7 @@ export const signup = async (req, res) => {
       message: emailSent
         ? 'Account initiated. Please enter the OTP code sent to your email.'
         : 'Account initiated. Please enter the OTP code logged to the server terminal.',
-      email: user.email,
-      otpFallback: (process.env.NODE_ENV !== 'production' && !emailSent) ? otp : undefined
+      email: user.email
     });
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -393,8 +392,7 @@ export const forgotPassword = async (req, res) => {
       message: emailSent
         ? 'OTP sent to your email. Please verify to reset your password.'
         : 'OTP sent to server log. Please verify to reset your password.',
-      email,
-      otpFallback: (process.env.NODE_ENV !== 'production' && !emailSent) ? otp : undefined
+      email
     });
   } catch (error) {
     res.status(500).json({ message: error.message });
