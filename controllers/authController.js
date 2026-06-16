@@ -1,4 +1,5 @@
 import User from '../models/User.js';
+import PendingUser from '../models/PendingUser.js';
 import jwt from 'jsonwebtoken';
 import { Resend } from 'resend';
 import nodemailer from 'nodemailer';
@@ -7,31 +8,39 @@ const sendEmail = async ({ to, subject, text, html }) => {
   try {
     // 1. Check if Gmail SMTP credentials are provided in env
     if (process.env.EMAIL_USER && process.env.EMAIL_PASS) {
-      const transporter = nodemailer.createTransport({
-        service: 'gmail',
-        auth: {
-          user: process.env.EMAIL_USER,
-          pass: process.env.EMAIL_PASS
-        }
-      });
+      try {
+        const transporter = nodemailer.createTransport({
+          service: 'gmail',
+          auth: {
+            user: process.env.EMAIL_USER.trim(),
+            pass: process.env.EMAIL_PASS.trim()
+          },
+          connectionTimeout: 3000, // 3 seconds timeout
+          greetingTimeout: 3000,
+          socketTimeout: 5000
+        });
 
-      const mailOptions = {
-        from: `"WedCoholic Couture" <${process.env.EMAIL_USER}>`,
-        to,
-        subject,
-        text,
-        html
-      };
+        const mailOptions = {
+          from: `"WedCoholic Couture" <${process.env.EMAIL_USER.trim()}>`,
+          to,
+          subject,
+          text,
+          html
+        };
 
-      await transporter.sendMail(mailOptions);
-      return true;
+        await transporter.sendMail(mailOptions);
+        return true;
+      } catch (smtpError) {
+        console.warn('Gmail SMTP failed, trying Resend API fallback:', smtpError.message);
+      }
     }
 
     // 2. Fall back to Resend API
-    if (process.env.RESEND_API_KEY) {
-      const resend = new Resend(process.env.RESEND_API_KEY);
+    const resendKey = process.env.RESEND_API_KEY ? process.env.RESEND_API_KEY.trim() : null;
+    if (resendKey) {
+      const resend = new Resend(resendKey);
       // If EMAIL_USER is configured but EMAIL_PASS is not, use it as sender for Resend custom domain
-      const sender = process.env.EMAIL_USER || 'onboarding@resend.dev';
+      const sender = process.env.EMAIL_USER ? process.env.EMAIL_USER.trim() : 'onboarding@resend.dev';
 
       const response = await resend.emails.send({
         from: `WedCoholic Couture <${sender}>`,
@@ -42,6 +51,7 @@ const sendEmail = async ({ to, subject, text, html }) => {
       });
 
       if (response.error) {
+        console.error('Resend API failed to send email:', response.error);
         return false;
       }
       return true;
@@ -49,6 +59,7 @@ const sendEmail = async ({ to, subject, text, html }) => {
 
     return false;
   } catch (error) {
+    console.error('Email service general error:', error.message);
     return false;
   }
 };
@@ -107,27 +118,38 @@ export const signup = async (req, res) => {
   try {
     const userExists = await User.findOne({ email });
     if (userExists) {
-      if (userExists.isVerified) {
-        return res.status(400).json({ message: 'User already exists' });
-      } else {
-        // Purge old unverified record to allow user to retry form sign up cleanly
-        await User.deleteOne({ _id: userExists._id });
-      }
+      return res.status(400).json({ message: 'User already exists' });
+    }
+
+    // Check if there is an existing pending signup for this email
+    const pendingExists = await PendingUser.findOne({ email });
+    if (pendingExists) {
+      await PendingUser.deleteOne({ _id: pendingExists._id });
     }
 
     // Generate 6-digit OTP
     const otp = Math.floor(100000 + Math.random() * 900000).toString();
     const otpExpiry = new Date(Date.now() + 15 * 60 * 1000); // 15 minutes expiry
 
-    // Save temporary user record
-    const user = await User.create({
+    // Save temporary pending user record (plaintext password to avoid double-hashing on verify)
+    const pendingUser = await PendingUser.create({
       name,
       email,
       phone,
-      password, // automatically hashed on save
-      isVerified: false,
+      password,
       otpCode: otp,
       otpExpiry,
+    });
+
+    // Clean up pending user if client disconnects/aborts request mid-flight before headers are sent
+    req.on('close', async () => {
+      if (!res.headersSent) {
+        try {
+          await PendingUser.deleteOne({ _id: pendingUser._id });
+        } catch (err) {
+          // Ignore error silently
+        }
+      }
     });
 
     const subject = 'WedCoholic Couture - Account OTP Activation';
@@ -154,7 +176,7 @@ export const signup = async (req, res) => {
       message: emailSent
         ? 'Account initiated. Please enter the OTP code sent to your email.'
         : 'Account initiated. Please enter the OTP code logged to the server terminal.',
-      email: user.email
+      email: pendingUser.email
     });
   } catch (error) {
     res.status(500).json({ message: error.message });
@@ -168,31 +190,40 @@ export const verifyOtp = async (req, res) => {
   const { email, otp } = req.body;
 
   try {
-    const user = await User.findOne({ email });
-
-    if (!user) {
-      return res.status(404).json({ message: 'User not found' });
-    }
-
-    if (user.isVerified) {
+    // Check if the user is already verified and exists in main User collection
+    const alreadyVerified = await User.findOne({ email });
+    if (alreadyVerified) {
       return res.status(400).json({ message: 'Account is already verified' });
     }
 
+    // Find the pending signup registration
+    const pendingUser = await PendingUser.findOne({ email });
+    if (!pendingUser) {
+      return res.status(404).json({ message: 'User not found or signup expired' });
+    }
+
     // Verify OTP code
-    if (user.otpCode !== otp) {
+    if (pendingUser.otpCode !== otp) {
       return res.status(400).json({ message: 'Invalid OTP code' });
     }
 
     // Check expiry
-    if (new Date() > user.otpExpiry) {
+    if (new Date() > pendingUser.otpExpiry) {
       return res.status(400).json({ message: 'OTP code expired' });
     }
 
-    // Verify user
-    user.isVerified = true;
-    user.otpCode = undefined;
-    user.otpExpiry = undefined;
-    await user.save();
+    // Create verified user in the database (password will be hashed by User's pre-save hook)
+    const user = await User.create({
+      name: pendingUser.name,
+      email: pendingUser.email,
+      phone: pendingUser.phone,
+      password: pendingUser.password, // Plaintext from pendingUser, gets hashed automatically by User's pre-save hook
+      role: 'user',
+      isVerified: true
+    });
+
+    // Remove the pending signup record
+    await PendingUser.deleteOne({ _id: pendingUser._id });
 
     res.status(200).json({
       _id: user._id,
@@ -247,6 +278,10 @@ export const login = async (req, res) => {
     // Normal user login check
     const user = await User.findOne({ email });
     if (!user) {
+      const pendingUser = await PendingUser.findOne({ email });
+      if (pendingUser) {
+        return res.status(403).json({ message: 'Please verify your account first.' });
+      }
       return res.status(401).json({ message: 'Invalid email or password' });
     }
 
@@ -330,9 +365,9 @@ export const cancelSignup = async (req, res) => {
     if (!email) {
       return res.status(400).json({ message: 'Email is required' });
     }
-    const user = await User.findOne({ email });
-    if (user && !user.isVerified) {
-      await User.deleteOne({ _id: user._id });
+    const pendingUser = await PendingUser.findOne({ email });
+    if (pendingUser) {
+      await PendingUser.deleteOne({ _id: pendingUser._id });
       return res.status(200).json({ message: 'Signup cancelled successfully' });
     }
     res.status(200).json({ message: 'No unverified user found to cancel' });
