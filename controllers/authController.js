@@ -67,9 +67,7 @@ export const seedAdminUsers = async () => {
   const superAdminPassword = process.env.SUPERADMIN_PASSWORD || '987136';
 
   try {
-    // Automatically purge all client accounts and unverified registrations from database to start clean
-    await User.deleteMany({ isVerified: false });
-    await User.deleteMany({ role: 'user' });
+    // No longer purging user accounts to allow them to persist across server restarts
 
     const adminExists = await User.findOne({ email: adminEmail });
     if (!adminExists) {
